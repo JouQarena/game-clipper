@@ -5,6 +5,7 @@ Uses Windows API (via pywin32) to detect fullscreen applications
 and identify games by process name / window title.
 """
 
+import os
 import re
 import threading
 import time
@@ -178,4 +179,3 @@ class GameDetector:
         return self.current_game is not None
 
 
-import os  # Import for _get_process_name

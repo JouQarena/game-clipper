@@ -12,8 +12,17 @@ import time
 from datetime import datetime
 from typing import List, Optional
 
-import cv2
-import numpy as np
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
+
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 
 class ClipEncoder:

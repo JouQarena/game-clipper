@@ -5,13 +5,24 @@ Uses the Windows Desktop Duplication API for high-performance
 GPU-accelerated screen capture. Falls back if DXGI is unavailable.
 """
 
+from __future__ import annotations
+
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass
 
-import cv2
-import numpy as np
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
+
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 try:
     import dxcam
@@ -117,7 +128,7 @@ class ScreenCapture:
                     fps_counter += 1
 
                     # Resize if needed
-                    if (frame.shape[1] != self.target_width or
+                    if HAS_CV2 and (frame.shape[1] != self.target_width or
                         frame.shape[0] != self.target_height):
                         frame = cv2.resize(frame,
                                            (self.target_width, self.target_height),
