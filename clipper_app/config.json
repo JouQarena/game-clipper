@@ -1,0 +1,16 @@
+{
+  "buffer_duration_seconds": 30,
+  "resolution": "720p",
+  "fps": 30,
+  "audio_source": "game_only",
+  "hotkey": "F8",
+  "save_location": "~/Videos/GameClipper",
+  "buffer_storage": "memory",
+  "run_on_startup": false,
+  "minimize_to_tray": true,
+  "enable_overlay": true,
+  "enable_game_detection": true,
+  "video_quality": 23,
+  "output_format": "mp4",
+  "codec": "libx264"
+}

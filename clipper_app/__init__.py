@@ -1,0 +1,1 @@
+# Game Clipper - Lightweight video game clipping tool

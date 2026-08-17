@@ -1,0 +1,19 @@
+# === Game Clipper - Core Dependencies (NO pyaudio) ===
+# Install these first - they all have Windows wheels
+
+# Screen capture via DXGI (Desktop Duplication API)
+dxcam>=0.1.0
+
+# FFmpeg integration - video encoding
+ffmpeg-python>=0.2.0
+
+# Image processing (frame manipulation, resizing)
+opencv-python-headless>=4.9.0
+
+# System tray icon
+pystray>=0.19.0
+Pillow>=10.0.0
+
+# Windows API bindings for hotkeys and capture
+pywin32>=306
+comtypes>=1.2.1

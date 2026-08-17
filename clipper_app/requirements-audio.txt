@@ -1,0 +1,15 @@
+# === OPTIONAL: Audio capture dependencies ===
+# Try ONE of these methods to install pyaudio on Windows:
+#
+#   METHOD 1 (easiest, if wheels exist for your Python):
+#       pip install pipwin
+#       pipwin install pyaudio
+#
+#   METHOD 2 (install MSVC Build Tools first):
+#       https://visualstudio.microsoft.com/visual-cpp-build-tools/
+#       pip install pyaudio
+#
+#   METHOD 3 (use Python 3.11 or 3.12 - pyaudio has prebuilt wheels there)
+#
+# The app runs fine WITHOUT pyaudio (just no audio in clips).
+pyaudio>=0.2.14
