@@ -1,0 +1,99 @@
+name: Build Windows EXE
+
+# Builds GameClipper.exe (standalone) + GameClipper_Setup.exe (installer)
+# on GitHub's Windows servers, for free.
+#
+# HOW TO TRIGGER:
+#   Option 1: Push/merge to 'main' branch -> builds automatically
+#   Option 2: Click "Actions" tab -> "Build Windows EXE" -> "Run workflow"
+#
+# DOWNLOAD RESULT:
+#   Actions tab -> click latest run -> "Artifacts" section at the bottom
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:   # manual run button
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      # 1. Get the code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Use Python 3.12 - has prebuilt wheels for ALL packages
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      # 3. Install Python dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r clipper_app/requirements.txt
+          pip install pyaudio          # works on 3.12 without compiling
+          pip install pyinstaller
+
+      # 4. Download FFmpeg (so the exe doesn't need it installed separately)
+      - name: Download FFmpeg
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip"
+          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_extract" -Force
+          $ffmpeg = Get-ChildItem -Path "ffmpeg_extract" -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path "bin"
+          Copy-Item $ffmpeg.FullName -Destination "bin/ffmpeg.exe"
+          Get-ChildItem "bin"
+
+      # 5. Build STANDALONE exe (single portable file)
+      - name: Build standalone EXE
+        run: |
+          pyinstaller --onefile --windowed --clean --noconfirm `
+            --name "GameClipper" `
+            --add-data "clipper_app/config.json;clipper_app" `
+            --add-binary "bin/ffmpeg.exe;bin" `
+            --hidden-import "comtypes.stream" `
+            --hidden-import "comtypes.gen" `
+            --hidden-import "win32timezone" `
+            --hidden-import "pystray._win32" `
+            --collect-submodules dxcam `
+            main.py
+
+      # 6. Build INSTALLER exe (for installation like normal apps)
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build onedir (for installer)
+        run: |
+          pyinstaller --onedir --windowed --clean --noconfirm `
+            --name "GameClipper" `
+            --add-data "clipper_app/config.json;clipper_app" `
+            --add-binary "bin/ffmpeg.exe;bin" `
+            --hidden-import "comtypes.stream" `
+            --hidden-import "comtypes.gen" `
+            --hidden-import "win32timezone" `
+            --hidden-import "pystray._win32" `
+            --collect-submodules dxcam `
+            main.py
+
+      - name: Compile installer with Inno Setup
+        run: |
+          ISCC.exe installer_script.iss
+
+      # 7. Upload both as downloadable artifacts
+      - name: Upload standalone EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameClipper-standalone
+          path: dist/GameClipper.exe
+
+      - name: Upload installer EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameClipper-installer
+          path: installer_output/GameClipper_Setup.exe
