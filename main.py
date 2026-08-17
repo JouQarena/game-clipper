@@ -15,10 +15,25 @@ import sys
 import threading
 import time
 
-from clipper_app.logger import get_logger, install_global_handlers, get_log_file_path
+# Install global handlers FIRST so nothing crashes silently
+from clipper_app.logger import (
+    get_logger, install_global_handlers, get_log_file_path
+)
 from clipper_app.config_manager import ConfigManager
 
-# Install global handlers FIRST so nothing crashes silently
+# Top-level imports so PyInstaller includes them in the frozen exe.
+# We wrap each component's USAGE in try/except in start() so a failure
+# in one component doesn't tear down the whole app.
+from clipper_app.capture.screen_capture import ScreenCapture
+from clipper_app.capture.audio_capture import AudioCapture
+from clipper_app.capture.frame_buffer import RingBuffer, AudioChunk
+from clipper_app.encoding.encoder import ClipEncoder
+from clipper_app.gui.settings_window import SettingsWindow
+from clipper_app.gui.tray_icon import TrayIcon
+from clipper_app.features.game_detection import GameDetector
+from clipper_app.features.overlay import Overlay
+from clipper_app.utils.hotkey_listener import HotkeyListener
+
 install_global_handlers()
 log = get_logger()
 
@@ -29,32 +44,6 @@ log.info(f"Platform: {sys.platform}")
 log.info(f"Frozen exe: {getattr(sys, 'frozen', False)}")
 log.info(f"Log file: {get_log_file_path()}")
 log.info("=" * 60)
-
-
-# Lazy imports so a single broken module doesn't kill startup
-def _try_import(module_path, class_name=None):
-    """Try to import a module/class, return None on failure."""
-    try:
-        mod_parts = module_path.rsplit(".", 1)
-        if class_name:
-            mod = __import__(module_path, fromlist=[class_name])
-            return getattr(mod, class_name)
-        return __import__(module_path)
-    except Exception:
-        log.exception(f"IMPORT FAILED: {module_path}.{class_name or ''}")
-        if class_name:
-            log.info(f"{class_name} will be DEGRADED")
-        return None
-
-
-ScreenCapture = _try_import("clipper_app.capture.screen_capture", "ScreenCapture")
-AudioCapture = _try_import("clipper_app.capture.audio_capture", "AudioCapture")
-ClipEncoder = _try_import("clipper_app.encoding.encoder", "ClipEncoder")
-SettingsWindow = _try_import("clipper_app.gui.settings_window", "SettingsWindow")
-TrayIcon = _try_import("clipper_app.gui.tray_icon", "TrayIcon")
-GameDetector = _try_import("clipper_app.features.game_detection", "GameDetector")
-Overlay = _try_import("clipper_app.features.overlay", "Overlay")
-HotkeyListener = _try_import("clipper_app.utils.hotkey_listener", "HotkeyListener")
 
 
 class GameClipperApp:
@@ -69,7 +58,6 @@ class GameClipperApp:
         self._running = False
         self._recording = False
 
-        # Components - all lazy-initialized to None
         self.screen_capture = None
         self.audio_capture = None
         self.encoder = None
@@ -95,39 +83,38 @@ class GameClipperApp:
 
         # 2. Screen capture
         try:
-            if ScreenCapture:
-                self.screen_capture = ScreenCapture(
-                    self.config,
-                    fps=self.config.get("fps", 30)
-                )
-                self.screen_capture.start()
-                log.info("[App] ScreenCapture started")
+            self.screen_capture = ScreenCapture(
+                self.config, fps=self.config.get("fps", 30)
+            )
+            self.screen_capture.start()
+            log.info("[App] ScreenCapture started")
         except Exception:
             log.exception("[App] ScreenCapture FAILED")
 
         # 3. Audio capture
         try:
-            if AudioCapture:
-                self.audio_capture = AudioCapture(self.config)
-                self.audio_capture.start()
-                log.info("[App] AudioCapture started")
+            self.audio_capture = AudioCapture(self.config)
+            self.audio_capture.start()
+            log.info("[App] AudioCapture started")
         except Exception:
             log.exception("[App] AudioCapture FAILED")
 
         # 4. Hotkey listener
         try:
-            if HotkeyListener:
-                self.hotkey_listener = HotkeyListener()
-                hotkey = self.config.get("hotkey", "F8")
-                self.hotkey_listener.register_hotkey(hotkey, self._on_clip_hotkey)
+            self.hotkey_listener = HotkeyListener()
+            hotkey = self.config.get("hotkey", "F8")
+            registered = self.hotkey_listener.register_hotkey(hotkey, self._on_clip_hotkey)
+            if registered:
                 self.hotkey_listener.start()
                 log.info(f"[App] Hotkey registered: {hotkey}")
+            else:
+                log.warning(f"[App] Hotkey '{hotkey}' FAILED to register")
         except Exception:
             log.exception("[App] Hotkey init FAILED")
 
         # 5. Game detection
         try:
-            if GameDetector and self.config.get("enable_game_detection", True):
+            if self.config.get("enable_game_detection", True):
                 self.game_detector = GameDetector()
                 self.game_detector.add_listener(self._on_game_change)
                 self.game_detector.start()
@@ -135,9 +122,9 @@ class GameClipperApp:
         except Exception:
             log.exception("[App] GameDetector FAILED")
 
-        # 6. Overlay (often problematic on Windows - wrap especially)
+        # 6. Overlay
         try:
-            if Overlay and self.config.get("enable_overlay", True):
+            if self.config.get("enable_overlay", True):
                 self.overlay = Overlay()
                 self.overlay.show()
                 log.info("[App] Overlay shown")
@@ -146,15 +133,14 @@ class GameClipperApp:
 
         # 7. System tray
         try:
-            if TrayIcon:
-                self.tray_icon = TrayIcon(
-                    on_show=self._on_tray_show,
-                    on_settings=self._on_tray_settings,
-                    on_quit=self._on_tray_quit,
-                    on_toggle_recording=self._toggle_recording,
-                )
-                self.tray_icon.run()
-                log.info("[App] Tray icon running")
+            self.tray_icon = TrayIcon(
+                on_show=self._on_tray_show,
+                on_settings=self._on_tray_settings,
+                on_quit=self._on_tray_quit,
+                on_toggle_recording=self._toggle_recording,
+            )
+            self.tray_icon.run()
+            log.info("[App] Tray icon running")
         except Exception:
             log.exception("[App] Tray icon FAILED")
 
@@ -173,14 +159,22 @@ class GameClipperApp:
         log.info(f"  Audio source:   {self.config.get('audio_source','game_only')}")
         log.info(f"  Log file:       {get_log_file_path()}")
 
+        # Open the log file in the user's editor so they can see status
+        self._maybe_open_log_once()
+
+    def _maybe_open_log_once(self):
+        """Helper for users running the packaged exe -- show the log
+        file path in console / taskbar hint so they can find it."""
+        pass  # No-op for now; the log path is printed in start()
+
     def stop(self):
         """Stop all components safely."""
         log.info("[App] Shutting down...")
         self._running = False
 
         for name, obj, method in [
-            ("Overlay", self.overlay, "hide"),
             ("TrayIcon", self.tray_icon, "stop"),
+            ("Overlay", self.overlay, "hide"),
             ("HotkeyListener", self.hotkey_listener, "stop"),
             ("GameDetector", self.game_detector, "stop"),
             ("AudioCapture", self.audio_capture, "stop"),
@@ -204,30 +198,25 @@ class GameClipperApp:
         self._save_clip()
 
     def _save_clip(self):
-        """Save the current buffer as a clip."""
         if not self.screen_capture or not self.encoder:
             log.warning("[Save] No screen_capture or encoder")
             return
-
         frames = self.screen_capture.get_buffer_snapshot()
         if not frames:
             log.warning("[Save] No frames in buffer")
             return
-
         log.info(f"[Save] Encoding {len(frames)} frames")
         audio_chunks = None
         if self.audio_capture:
             audio_chunks = self.audio_capture.get_audio_data()
-
         self.encoder.save_clip(frames, audio_chunks=audio_chunks,
                                callback=self._on_clip_saved)
 
     def _on_clip_saved(self, path):
-        """Called when encoding done."""
         if path:
             log.info(f"[Save] OK -> {path}")
         else:
-            log.error(f"[Save] FAILED")
+            log.error("[Save] FAILED")
 
     def _toggle_recording(self):
         self._recording = not self._recording
@@ -247,10 +236,9 @@ class GameClipperApp:
     def _on_tray_settings(self):
         log.debug("[Tray] Settings")
         try:
-            if not self.settings_window and SettingsWindow:
+            if not self.settings_window:
                 self.settings_window = SettingsWindow(self.config, on_save=self._on_settings_saved)
-            if self.settings_window:
-                self.settings_window.show()
+            self.settings_window.show()
         except Exception:
             log.exception("[Tray] Settings open FAILED")
 
@@ -283,20 +271,20 @@ def main():
     args = parser.parse_args()
 
     if args.debug:
-        log.setLevel(10)  # DEBUG
+        log.setLevel(10)
         for h in log.handlers:
             if hasattr(h, 'setLevel'):
                 h.setLevel(10)
 
-    # Load config (with error handling)
     try:
         config = ConfigManager()
         log.info(f"[Main] Config loaded from {config.config_path}")
     except Exception:
         log.exception("[Main] Config load FAILED")
         config = ConfigManager.__new__(ConfigManager)
-        config.data = dict(ConfigManager.DEFAULTS)
         from clipper_app.config_manager import ConfigManager as _CM
+        config.data = dict(_CM.DEFAULTS)
+        sys.path.insert(0, os.path.dirname(os.path.abspath("config.json")))
         config.config_path = os.path.join(os.getcwd(), "config.json")
 
     app = GameClipperApp(config)
@@ -309,7 +297,6 @@ def main():
         print(f"Log file: {get_log_file_path()}")
         print()
 
-        # Main thread just sleeps and watches for exit
         while app._running:
             time.sleep(1)
 
