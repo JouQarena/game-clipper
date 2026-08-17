@@ -308,10 +308,14 @@ class GameClipperApp:
         log.info("[Settings] saved, applying")
         try:
             if self.hotkey_listener:
-                old = self.config.get("hotkey", "F8")
-                self.hotkey_listener.unregister_hotkey(old)
-                new = self.config.get("hotkey", "F8")
-                self.hotkey_listener.register_hotkey(new, self._on_clip_hotkey)
+                # Read the NEW hotkey from the already-updated config
+                new_hotkey = self.config.get("hotkey", "F8")
+                # Unregister ALL previously registered hotkeys
+                for old_key in list(self.hotkey_listener._key_names.values()):
+                    self.hotkey_listener.unregister_hotkey(old_key)
+                # Register the new hotkey
+                self.hotkey_listener.register_hotkey(new_hotkey, self._on_clip_hotkey)
+                log.info(f"[Settings] Hotkey changed to: {new_hotkey}")
         except Exception:
             log.exception("[Settings] hotkey re-register FAILED")
         try:
