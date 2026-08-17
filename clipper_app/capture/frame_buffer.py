@@ -13,8 +13,17 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-import cv2
-import numpy as np
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
+
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 
 @dataclass
@@ -91,6 +100,8 @@ class RingBuffer:
 
     def _write_frame_to_disk(self, frame):
         """Write frame data to temp file (for disk-backed storage)."""
+        if not HAS_CV2:
+            return
         try:
             encoded = cv2.imencode('.jpg', frame.data, [cv2.IMWRITE_JPEG_QUALITY, 85])[1]
             size_bytes = len(encoded)

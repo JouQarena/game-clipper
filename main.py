@@ -22,17 +22,53 @@ from clipper_app.logger import (
 from clipper_app.config_manager import ConfigManager
 
 # Top-level imports so PyInstaller includes them in the frozen exe.
-# We wrap each component's USAGE in try/except in start() so a failure
-# in one component doesn't tear down the whole app.
-from clipper_app.capture.screen_capture import ScreenCapture
-from clipper_app.capture.audio_capture import AudioCapture
-from clipper_app.capture.frame_buffer import RingBuffer, AudioChunk
-from clipper_app.encoding.encoder import ClipEncoder
-from clipper_app.gui.settings_window import SettingsWindow
-from clipper_app.gui.tray_icon import TrayIcon
-from clipper_app.features.game_detection import GameDetector
-from clipper_app.features.overlay import Overlay
-from clipper_app.utils.hotkey_listener import HotkeyListener
+# We wrap each in try/except so a missing dependency doesn't crash
+# the whole app before it even starts.
+try:
+    from clipper_app.capture.screen_capture import ScreenCapture
+except ImportError:
+    ScreenCapture = None
+
+try:
+    from clipper_app.capture.audio_capture import AudioCapture
+except ImportError:
+    AudioCapture = None
+
+try:
+    from clipper_app.capture.frame_buffer import RingBuffer, AudioChunk
+except ImportError:
+    RingBuffer = None
+    AudioChunk = None
+
+try:
+    from clipper_app.encoding.encoder import ClipEncoder
+except ImportError:
+    ClipEncoder = None
+
+try:
+    from clipper_app.gui.settings_window import SettingsWindow
+except ImportError:
+    SettingsWindow = None
+
+try:
+    from clipper_app.gui.tray_icon import TrayIcon
+except ImportError:
+    TrayIcon = None
+
+try:
+    from clipper_app.features.game_detection import GameDetector
+except ImportError:
+    GameDetector = None
+
+try:
+    from clipper_app.features.overlay import Overlay
+except ImportError:
+    Overlay = None
+
+try:
+    from clipper_app.utils.hotkey_listener import HotkeyListener
+except ImportError:
+    HotkeyListener = None
 
 install_global_handlers()
 log = get_logger()
@@ -75,74 +111,95 @@ class GameClipperApp:
         log.info("[App] Starting components")
 
         # 1. Encoder (no background thread - just creates instance)
-        try:
-            self.encoder = ClipEncoder(self.config)
-            log.info("[App] Encoder ready")
-        except Exception:
-            log.exception("[App] Encoder init FAILED")
+        if ClipEncoder is not None:
+            try:
+                self.encoder = ClipEncoder(self.config)
+                log.info("[App] Encoder ready")
+            except Exception:
+                log.exception("[App] Encoder init FAILED")
+        else:
+            log.warning("[App] ClipEncoder not available (missing dependency)")
 
         # 2. Screen capture
-        try:
-            self.screen_capture = ScreenCapture(
-                self.config, fps=self.config.get("fps", 30)
-            )
-            self.screen_capture.start()
-            log.info("[App] ScreenCapture started")
-        except Exception:
-            log.exception("[App] ScreenCapture FAILED")
+        if ScreenCapture is not None:
+            try:
+                self.screen_capture = ScreenCapture(
+                    self.config, fps=self.config.get("fps", 30)
+                )
+                self.screen_capture.start()
+                log.info("[App] ScreenCapture started")
+            except Exception:
+                log.exception("[App] ScreenCapture FAILED")
+        else:
+            log.warning("[App] ScreenCapture not available (missing dependency)")
 
         # 3. Audio capture
-        try:
-            self.audio_capture = AudioCapture(self.config)
-            self.audio_capture.start()
-            log.info("[App] AudioCapture started")
-        except Exception:
-            log.exception("[App] AudioCapture FAILED")
+        if AudioCapture is not None:
+            try:
+                self.audio_capture = AudioCapture(self.config)
+                self.audio_capture.start()
+                log.info("[App] AudioCapture started")
+            except Exception:
+                log.exception("[App] AudioCapture FAILED")
+        else:
+            log.warning("[App] AudioCapture not available (missing dependency)")
 
         # 4. Hotkey listener
-        try:
-            self.hotkey_listener = HotkeyListener()
-            hotkey = self.config.get("hotkey", "F8")
-            registered = self.hotkey_listener.register_hotkey(hotkey, self._on_clip_hotkey)
-            if registered:
-                self.hotkey_listener.start()
-                log.info(f"[App] Hotkey registered: {hotkey}")
-            else:
-                log.warning(f"[App] Hotkey '{hotkey}' FAILED to register")
-        except Exception:
-            log.exception("[App] Hotkey init FAILED")
+        if HotkeyListener is not None:
+            try:
+                self.hotkey_listener = HotkeyListener()
+                hotkey = self.config.get("hotkey", "F8")
+                registered = self.hotkey_listener.register_hotkey(hotkey, self._on_clip_hotkey)
+                if registered:
+                    self.hotkey_listener.start()
+                    log.info(f"[App] Hotkey registered: {hotkey}")
+                else:
+                    log.warning(f"[App] Hotkey '{hotkey}' FAILED to register")
+            except Exception:
+                log.exception("[App] Hotkey init FAILED")
+        else:
+            log.warning("[App] HotkeyListener not available (missing dependency)")
 
         # 5. Game detection
-        try:
-            if self.config.get("enable_game_detection", True):
-                self.game_detector = GameDetector()
-                self.game_detector.add_listener(self._on_game_change)
-                self.game_detector.start()
-                log.info("[App] GameDetector started")
-        except Exception:
-            log.exception("[App] GameDetector FAILED")
+        if GameDetector is not None:
+            try:
+                if self.config.get("enable_game_detection", True):
+                    self.game_detector = GameDetector()
+                    self.game_detector.add_listener(self._on_game_change)
+                    self.game_detector.start()
+                    log.info("[App] GameDetector started")
+            except Exception:
+                log.exception("[App] GameDetector FAILED")
+        else:
+            log.warning("[App] GameDetector not available (missing dependency)")
 
         # 6. Overlay
-        try:
-            if self.config.get("enable_overlay", True):
-                self.overlay = Overlay()
-                self.overlay.show()
-                log.info("[App] Overlay shown")
-        except Exception:
-            log.exception("[App] Overlay init FAILED")
+        if Overlay is not None:
+            try:
+                if self.config.get("enable_overlay", True):
+                    self.overlay = Overlay()
+                    self.overlay.show()
+                    log.info("[App] Overlay shown")
+            except Exception:
+                log.exception("[App] Overlay init FAILED")
+        else:
+            log.warning("[App] Overlay not available (missing dependency)")
 
         # 7. System tray
-        try:
-            self.tray_icon = TrayIcon(
-                on_show=self._on_tray_show,
-                on_settings=self._on_tray_settings,
-                on_quit=self._on_tray_quit,
-                on_toggle_recording=self._toggle_recording,
-            )
-            self.tray_icon.run()
-            log.info("[App] Tray icon running")
-        except Exception:
-            log.exception("[App] Tray icon FAILED")
+        if TrayIcon is not None:
+            try:
+                self.tray_icon = TrayIcon(
+                    on_show=self._on_tray_show,
+                    on_settings=self._on_tray_settings,
+                    on_quit=self._on_tray_quit,
+                    on_toggle_recording=self._toggle_recording,
+                )
+                self.tray_icon.run()
+                log.info("[App] Tray icon running")
+            except Exception:
+                log.exception("[App] Tray icon FAILED")
+        else:
+            log.warning("[App] TrayIcon not available (missing dependency)")
 
         # Summary
         log.info("[App] === Started ===")
@@ -251,10 +308,14 @@ class GameClipperApp:
         log.info("[Settings] saved, applying")
         try:
             if self.hotkey_listener:
-                old = self.config.get("hotkey", "F8")
-                self.hotkey_listener.unregister_hotkey(old)
-                new = self.config.get("hotkey", "F8")
-                self.hotkey_listener.register_hotkey(new, self._on_clip_hotkey)
+                # Read the NEW hotkey from the already-updated config
+                new_hotkey = self.config.get("hotkey", "F8")
+                # Unregister ALL previously registered hotkeys
+                for old_key in list(self.hotkey_listener._key_names.values()):
+                    self.hotkey_listener.unregister_hotkey(old_key)
+                # Register the new hotkey
+                self.hotkey_listener.register_hotkey(new_hotkey, self._on_clip_hotkey)
+                log.info(f"[Settings] Hotkey changed to: {new_hotkey}")
         except Exception:
             log.exception("[Settings] hotkey re-register FAILED")
         try:

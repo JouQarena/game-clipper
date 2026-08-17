@@ -13,8 +13,13 @@ Features:
 """
 
 import os
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+
+try:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+    HAS_TKINTER = True
+except ImportError:
+    HAS_TKINTER = False
 
 
 class SettingsWindow:
@@ -30,6 +35,9 @@ class SettingsWindow:
 
     def show(self):
         """Create and show the settings window."""
+        if not HAS_TKINTER:
+            print("[SettingsWindow] tkinter not available.")
+            return
         if self.window and self.window.winfo_exists():
             self.window.lift()
             return
