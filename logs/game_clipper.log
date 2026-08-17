@@ -1,0 +1,8 @@
+2026-08-17 10:39:46 [INFO] GameClipper: Test message from logger
+2026-08-17 10:39:46 [INFO] GameClipper: ============================================================
+2026-08-17 10:39:46 [INFO] GameClipper: Game Clipper starting
+2026-08-17 10:39:46 [INFO] GameClipper: Python: 3.13.14 (main, Jul 14 2026, 04:45:36) [GCC 14.2.0]
+2026-08-17 10:39:46 [INFO] GameClipper: Platform: linux
+2026-08-17 10:39:46 [INFO] GameClipper: Frozen exe: True
+2026-08-17 10:39:46 [INFO] GameClipper: Log file: /home/user/game-clipper-/logs/game_clipper.log
+2026-08-17 10:39:46 [INFO] GameClipper: ============================================================

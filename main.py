@@ -5,281 +5,318 @@ Lightweight, open-source video game clipping tool with
 a 30-second pre-recording buffer (configurable).
 
 Usage:
-    python main.py
+    python main.py              # Normal mode
+    python main.py --debug      # Verbose logging + console
 """
 
+import argparse
 import os
 import sys
 import threading
 import time
 
-# ===== Make sure we can find the clipper_app package =====
-# This script sits at the same level as the package dir
-_BASE = os.path.dirname(os.path.realpath(os.path.abspath(__file__)))
-if _BASE not in sys.path:
-    sys.path.insert(0, _BASE)
-
-# Import all components from the clipper_app package
+from clipper_app.logger import get_logger, install_global_handlers, get_log_file_path
 from clipper_app.config_manager import ConfigManager
-from clipper_app.capture.screen_capture import ScreenCapture
-from clipper_app.capture.audio_capture import AudioCapture
-from clipper_app.encoding.encoder import ClipEncoder
-from clipper_app.gui.settings_window import SettingsWindow
-from clipper_app.gui.tray_icon import TrayIcon
-from clipper_app.features.game_detection import GameDetector
-from clipper_app.features.overlay import Overlay
-from clipper_app.utils.hotkey_listener import HotkeyListener
+
+# Install global handlers FIRST so nothing crashes silently
+install_global_handlers()
+log = get_logger()
+
+log.info("=" * 60)
+log.info("Game Clipper starting")
+log.info(f"Python: {sys.version}")
+log.info(f"Platform: {sys.platform}")
+log.info(f"Frozen exe: {getattr(sys, 'frozen', False)}")
+log.info(f"Log file: {get_log_file_path()}")
+log.info("=" * 60)
+
+
+# Lazy imports so a single broken module doesn't kill startup
+def _try_import(module_path, class_name=None):
+    """Try to import a module/class, return None on failure."""
+    try:
+        mod_parts = module_path.rsplit(".", 1)
+        if class_name:
+            mod = __import__(module_path, fromlist=[class_name])
+            return getattr(mod, class_name)
+        return __import__(module_path)
+    except Exception:
+        log.exception(f"IMPORT FAILED: {module_path}.{class_name or ''}")
+        if class_name:
+            log.info(f"{class_name} will be DEGRADED")
+        return None
+
+
+ScreenCapture = _try_import("clipper_app.capture.screen_capture", "ScreenCapture")
+AudioCapture = _try_import("clipper_app.capture.audio_capture", "AudioCapture")
+ClipEncoder = _try_import("clipper_app.encoding.encoder", "ClipEncoder")
+SettingsWindow = _try_import("clipper_app.gui.settings_window", "SettingsWindow")
+TrayIcon = _try_import("clipper_app.gui.tray_icon", "TrayIcon")
+GameDetector = _try_import("clipper_app.features.game_detection", "GameDetector")
+Overlay = _try_import("clipper_app.features.overlay", "Overlay")
+HotkeyListener = _try_import("clipper_app.utils.hotkey_listener", "HotkeyListener")
 
 
 class GameClipperApp:
     """
     Main application class that coordinates all components.
-
-    Manages the capture pipeline, ring buffer, encoding,
-    GUI, hotkeys, and special features.
+    Each subsystem is wrapped in try/except so one failure
+    doesn't take down the whole app.
     """
 
-    def __init__(self):
-        print("=" * 50)
-        print("Game Clipper - Starting up...")
-        print("=" * 50)
-
-        self.config = ConfigManager()
-
-        # Core capture components
-        self.screen_capture = None
-        self.audio_capture = None
-        self.encoder = ClipEncoder(self.config)
-
-        # GUI components
-        self.settings_window = None
-        self.tray_icon = None
-
-        # Features
-        self.game_detector = GameDetector()
-        self.overlay = Overlay()
-        self.hotkey_listener = HotkeyListener()
-
-        # State
+    def __init__(self, config):
+        self.config = config
         self._running = False
         self._recording = False
-        self._main_window = None
 
-        print("[Main] Initialized")
+        # Components - all lazy-initialized to None
+        self.screen_capture = None
+        self.audio_capture = None
+        self.encoder = None
+        self.settings_window = None
+        self.tray_icon = None
+        self.game_detector = None
+        self.overlay = None
+        self.hotkey_listener = None
 
     def start(self):
-        """Start all components."""
+        """Start all components safely."""
         if self._running:
             return
-
         self._running = True
+        log.info("[App] Starting components")
 
-        # Register hotkey
-        hotkey = self.config.get("hotkey", "F8")
-        self.hotkey_listener.register_hotkey(hotkey, self._on_clip_hotkey)
+        # 1. Encoder (no background thread - just creates instance)
+        try:
+            self.encoder = ClipEncoder(self.config)
+            log.info("[App] Encoder ready")
+        except Exception:
+            log.exception("[App] Encoder init FAILED")
 
-        # Start screen capture
-        self.screen_capture = ScreenCapture(
-            self.config,
-            fps=self.config.get("fps", 30)
-        )
-        self.screen_capture.start()
+        # 2. Screen capture
+        try:
+            if ScreenCapture:
+                self.screen_capture = ScreenCapture(
+                    self.config,
+                    fps=self.config.get("fps", 30)
+                )
+                self.screen_capture.start()
+                log.info("[App] ScreenCapture started")
+        except Exception:
+            log.exception("[App] ScreenCapture FAILED")
 
-        # Start audio capture
-        self.audio_capture = AudioCapture(self.config)
-        self.audio_capture.start()
+        # 3. Audio capture
+        try:
+            if AudioCapture:
+                self.audio_capture = AudioCapture(self.config)
+                self.audio_capture.start()
+                log.info("[App] AudioCapture started")
+        except Exception:
+            log.exception("[App] AudioCapture FAILED")
 
-        # Start game detection
-        if self.config.get("enable_game_detection", True):
-            self.game_detector.add_listener(self._on_game_change)
-            self.game_detector.start()
+        # 4. Hotkey listener
+        try:
+            if HotkeyListener:
+                self.hotkey_listener = HotkeyListener()
+                hotkey = self.config.get("hotkey", "F8")
+                self.hotkey_listener.register_hotkey(hotkey, self._on_clip_hotkey)
+                self.hotkey_listener.start()
+                log.info(f"[App] Hotkey registered: {hotkey}")
+        except Exception:
+            log.exception("[App] Hotkey init FAILED")
 
-        # Start hotkey listener
-        self.hotkey_listener.start()
+        # 5. Game detection
+        try:
+            if GameDetector and self.config.get("enable_game_detection", True):
+                self.game_detector = GameDetector()
+                self.game_detector.add_listener(self._on_game_change)
+                self.game_detector.start()
+                log.info("[App] GameDetector started")
+        except Exception:
+            log.exception("[App] GameDetector FAILED")
 
-        # Show overlay if enabled
-        if self.config.get("enable_overlay", True):
-            self.overlay.show()
+        # 6. Overlay (often problematic on Windows - wrap especially)
+        try:
+            if Overlay and self.config.get("enable_overlay", True):
+                self.overlay = Overlay()
+                self.overlay.show()
+                log.info("[App] Overlay shown")
+        except Exception:
+            log.exception("[App] Overlay init FAILED")
 
-        # Start system tray
-        self.tray_icon = TrayIcon(
-            on_show=self._on_tray_show,
-            on_settings=self._on_tray_settings,
-            on_quit=self._on_tray_quit,
-            on_toggle_recording=self._toggle_recording,
-        )
-        self.tray_icon.run()
+        # 7. System tray
+        try:
+            if TrayIcon:
+                self.tray_icon = TrayIcon(
+                    on_show=self._on_tray_show,
+                    on_settings=self._on_tray_settings,
+                    on_quit=self._on_tray_quit,
+                    on_toggle_recording=self._toggle_recording,
+                )
+                self.tray_icon.run()
+                log.info("[App] Tray icon running")
+        except Exception:
+            log.exception("[App] Tray icon FAILED")
 
-        print("[Main] All components started")
-        print(f"[Main] Hotkey: {hotkey} to save clip")
-        print(f"[Main] Resolution: {self.config.resolution_string}")
-        print(f"[Main] FPS: {self.config.get('fps', 30)}")
-        print(f"[Main] Audio: {self.config.get('audio_source', 'game_only')}")
+        # Summary
+        log.info("[App] === Started ===")
+        log.info(f"  Screen capture: {self.screen_capture is not None}")
+        log.info(f"  Audio capture:  {self.audio_capture is not None}")
+        log.info(f"  Hotkey:         {self.hotkey_listener is not None}")
+        log.info(f"  Game detector:  {self.game_detector is not None}")
+        log.info(f"  Overlay:        {self.overlay is not None}")
+        log.info(f"  Tray icon:      {self.tray_icon is not None}")
+        log.info(f"  Encoder:        {self.encoder is not None}")
+        log.info(f"  Hotkey:         {self.config.get('hotkey','F8')}")
+        log.info(f"  Resolution:     {self.config.resolution_string}")
+        log.info(f"  FPS:            {self.config.get('fps', 30)}")
+        log.info(f"  Audio source:   {self.config.get('audio_source','game_only')}")
+        log.info(f"  Log file:       {get_log_file_path()}")
 
     def stop(self):
-        """Stop all components gracefully."""
-        print("[Main] Shutting down...")
+        """Stop all components safely."""
+        log.info("[App] Shutting down...")
         self._running = False
 
-        if self.overlay:
-            self.overlay.hide()
-        if self.hotkey_listener:
-            self.hotkey_listener.stop()
-        if self.game_detector:
-            self.game_detector.stop()
-        if self.audio_capture:
-            self.audio_capture.stop()
-        if self.screen_capture:
-            self.screen_capture.stop()
-        if self.tray_icon:
-            self.tray_icon.stop()
+        for name, obj, method in [
+            ("Overlay", self.overlay, "hide"),
+            ("TrayIcon", self.tray_icon, "stop"),
+            ("HotkeyListener", self.hotkey_listener, "stop"),
+            ("GameDetector", self.game_detector, "stop"),
+            ("AudioCapture", self.audio_capture, "stop"),
+            ("ScreenCapture", self.screen_capture, "stop"),
+        ]:
+            try:
+                if obj and hasattr(obj, method):
+                    getattr(obj, method)()
+                    log.debug(f"[App] {name} stopped")
+            except Exception:
+                log.exception(f"[App] Error stopping {name}")
 
-        print("[Main] Shutdown complete")
+        log.info("[App] Shutdown complete")
 
     def _on_clip_hotkey(self):
-        """Called when the save clip hotkey is pressed."""
-        print("[Main] Hotkey pressed! Saving clip...")
+        """Called when save hotkey is pressed."""
+        if not self.screen_capture:
+            log.warning("[Hotkey] Screen capture not running")
+            return
+        log.info("[Hotkey] Save clip requested")
         self._save_clip()
 
     def _save_clip(self):
         """Save the current buffer as a clip."""
-        if not self.screen_capture:
-            print("[Main] Screen capture not running")
+        if not self.screen_capture or not self.encoder:
+            log.warning("[Save] No screen_capture or encoder")
             return
 
-        # Get frames from buffer
         frames = self.screen_capture.get_buffer_snapshot()
         if not frames:
-            print("[Main] No frames in buffer - nothing to save!")
+            log.warning("[Save] No frames in buffer")
             return
 
-        print(f"[Main] Saving clip with {len(frames)} frames...")
-
-        # Get audio chunks if available
+        log.info(f"[Save] Encoding {len(frames)} frames")
         audio_chunks = None
         if self.audio_capture:
             audio_chunks = self.audio_capture.get_audio_data()
 
-        # Start encoding
-        self.encoder.save_clip(
-            frames,
-            audio_chunks=audio_chunks,
-            callback=self._on_clip_saved
-        )
+        self.encoder.save_clip(frames, audio_chunks=audio_chunks,
+                               callback=self._on_clip_saved)
 
     def _on_clip_saved(self, path):
-        """Callback when clip encoding is complete."""
+        """Called when encoding done."""
         if path:
-            print(f"[Main] Clip saved: {path}")
+            log.info(f"[Save] OK -> {path}")
         else:
-            print("[Main] Failed to save clip!")
-
-    def _get_buffer_fill(self):
-        """Calculate buffer fill percentage."""
-        if not self.screen_capture:
-            return 0.0
-        fps = self.config.get("fps", 30)
-        duration = self.config.get("buffer_duration_seconds", 30)
-        max_frames = fps * duration
-        if max_frames == 0:
-            return 0.0
-        return min(1.0, self.screen_capture.buffer_frame_count / max_frames)
-
-    def _update_overlay(self):
-        """Update overlay with current status."""
-        if self.overlay and self._running:
-            self.overlay.update_status(
-                is_recording=self._recording,
-                fps=self.screen_capture.current_fps if self.screen_capture else 0,
-                buffer_fill=self._get_buffer_fill(),
-                game_name=self.game_detector.current_game or "",
-            )
+            log.error(f"[Save] FAILED")
 
     def _toggle_recording(self):
-        """Toggle recording state."""
         self._recording = not self._recording
-        print(f"[Main] Recording: {self._recording}")
-
+        log.info(f"[App] recording={self._recording}")
         if self.tray_icon:
-            self.tray_icon.set_recording_status(self._recording)
-
-        if self.overlay:
-            self._update_overlay()
+            try:
+                self.tray_icon.set_recording_status(self._recording)
+            except Exception:
+                log.exception("[App] tray set status FAILED")
 
     def _on_game_change(self, game_name):
-        """Called when a game starts/ends."""
-        if game_name:
-            print(f"[Main] Game detected: {game_name}")
-        else:
-            print("[Main] No game in focus")
-
-        if self.overlay:
-            self._update_overlay()
+        log.info(f"[Game] {game_name or '<none>'}")
 
     def _on_tray_show(self):
-        """Show main window."""
-        pass
+        log.debug("[Tray] Show")
 
     def _on_tray_settings(self):
-        """Open settings window."""
-        if not self.settings_window:
-            self.settings_window = SettingsWindow(
-                self.config,
-                on_save=self._on_settings_saved
-            )
-        self.settings_window.show()
+        log.debug("[Tray] Settings")
+        try:
+            if not self.settings_window and SettingsWindow:
+                self.settings_window = SettingsWindow(self.config, on_save=self._on_settings_saved)
+            if self.settings_window:
+                self.settings_window.show()
+        except Exception:
+            log.exception("[Tray] Settings open FAILED")
 
     def _on_tray_quit(self):
-        """Quit the application."""
-        print("[Main] Quit requested via tray")
+        log.info("[Tray] Quit")
         self.stop()
         os._exit(0)
 
     def _on_settings_saved(self, config):
-        """Called when settings are saved."""
-        print("[Main] Settings updated, applying changes...")
-
-        # Re-register hotkey if changed
-        old_hotkey = self.config.get("hotkey", "F8")
-        self.hotkey_listener.unregister_hotkey(old_hotkey)
-        new_hotkey = self.config.get("hotkey", "F8")
-        self.hotkey_listener.register_hotkey(new_hotkey, self._on_clip_hotkey)
-
-        # Update screen capture settings
-        if self.screen_capture:
-            self.screen_capture.update_settings()
-
-        # Update overlay
-        if self.overlay:
-            if self.config.get("enable_overlay", True):
-                self.overlay.show()
-            else:
-                self.overlay.hide()
-
-        # Update game detection
-        if self.game_detector:
-            if self.config.get("enable_game_detection", True):
-                self.game_detector.start()
-            else:
-                self.game_detector.stop()
+        log.info("[Settings] saved, applying")
+        try:
+            if self.hotkey_listener:
+                old = self.config.get("hotkey", "F8")
+                self.hotkey_listener.unregister_hotkey(old)
+                new = self.config.get("hotkey", "F8")
+                self.hotkey_listener.register_hotkey(new, self._on_clip_hotkey)
+        except Exception:
+            log.exception("[Settings] hotkey re-register FAILED")
+        try:
+            if self.screen_capture:
+                self.screen_capture.update_settings()
+        except Exception:
+            log.exception("[Settings] screen_capture update FAILED")
 
 
 def main():
-    """Application entry point."""
-    app = GameClipperApp()
+    parser = argparse.ArgumentParser(description="Game Clipper")
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable verbose console logging")
+    args = parser.parse_args()
+
+    if args.debug:
+        log.setLevel(10)  # DEBUG
+        for h in log.handlers:
+            if hasattr(h, 'setLevel'):
+                h.setLevel(10)
+
+    # Load config (with error handling)
+    try:
+        config = ConfigManager()
+        log.info(f"[Main] Config loaded from {config.config_path}")
+    except Exception:
+        log.exception("[Main] Config load FAILED")
+        config = ConfigManager.__new__(ConfigManager)
+        config.data = dict(ConfigManager.DEFAULTS)
+        from clipper_app.config_manager import ConfigManager as _CM
+        config.config_path = os.path.join(os.getcwd(), "config.json")
+
+    app = GameClipperApp(config)
 
     try:
         app.start()
         print()
         print("Game Clipper is running!")
         print("Press Ctrl+C to quit")
+        print(f"Log file: {get_log_file_path()}")
         print()
 
+        # Main thread just sleeps and watches for exit
         while app._running:
             time.sleep(1)
 
     except KeyboardInterrupt:
-        print("\nInterrupted by user")
+        print("\n[Main] Interrupted by user")
+    except Exception:
+        log.exception("[Main] UNCAUGHT EXCEPTION IN MAIN LOOP")
     finally:
         app.stop()
 
